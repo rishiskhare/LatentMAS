@@ -70,14 +70,17 @@ class ModelWrapper:
         # fallback: normal transformers path
         self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
         _ensure_pad_token(self.tokenizer)
+
         with torch.no_grad():
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype=(torch.bfloat16 if torch.cuda.is_available() else torch.float32),
+                device_map="auto",
             )
         if len(self.tokenizer) != self.model.get_input_embeddings().weight.shape[0]:
             self.model.resize_token_embeddings(len(self.tokenizer))
-        self.model.to(device)
+        
+        # self.model.to(device) # Handled by device_map="auto"
         self.model.eval()
         if hasattr(self.model.config, "use_cache"):
             self.model.config.use_cache = True
@@ -108,8 +111,9 @@ class ModelWrapper:
             return_tensors="pt",
             add_special_tokens=False,
         )
-        input_ids = encoded["input_ids"].to(self.device)
-        attention_mask = encoded["attention_mask"].to(self.device)
+        target_device = "cpu" if self.use_vllm else self.device
+        input_ids = encoded["input_ids"].to(target_device)
+        attention_mask = encoded["attention_mask"].to(target_device)
         active_ids = input_ids[0][attention_mask[0].bool()].tolist()
         tokens = self.tokenizer.convert_ids_to_tokens(active_ids)
         return prompt_text, input_ids, attention_mask, tokens
@@ -128,8 +132,9 @@ class ModelWrapper:
             padding=True,
             add_special_tokens=False,
         )
-        input_ids = encoded["input_ids"].to(self.device)
-        attention_mask = encoded["attention_mask"].to(self.device)
+        target_device = "cpu" if self.use_vllm else self.device
+        input_ids = encoded["input_ids"].to(target_device)
+        attention_mask = encoded["attention_mask"].to(target_device)
         tokens_batch: List[List[str]] = []
         for ids_row, mask_row in zip(input_ids, attention_mask):
             active_ids = ids_row[mask_row.bool()].tolist()
